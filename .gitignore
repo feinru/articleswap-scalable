@@ -1,2 +1,3 @@
 /docs
 /nginx_runtime/
+.env

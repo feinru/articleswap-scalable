@@ -1,6 +1,8 @@
 <script lang="ts">
   import SenderPanel from "$lib/components/sender/SenderPanel.svelte";
   import ReceiverPanel from "$lib/components/receiver/ReceiverPanel.svelte";
+
+  let { data, form } = $props();
 </script>
 
 <svelte:head>
@@ -16,7 +18,12 @@
   </header>
 
   <div class="container">
-    <SenderPanel />
+    <SenderPanel
+      initialRecent={data.recent}
+      initialRecentTotal={data.recentTotal}
+      initialRecentError={data.recentError}
+      submitResult={form?.submitResult}
+    />
     <ReceiverPanel />
   </div>
 </main>

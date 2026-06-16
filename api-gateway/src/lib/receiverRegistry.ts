@@ -35,11 +35,17 @@ export function sendToReceiver(receiver: string, article: any, isBroadcast = fal
     });
   }
 
-  // If this is the initiating node, broadcast to other cluster ports
+  // If this is the initiating node, broadcast to other cluster peers.
+  // Peers are read from CLUSTER_PEERS env var (comma-separated host:port list).
+  // Defaults to local dev setup. Connection errors (offline peers, self-loop) are ignored.
   if (!isBroadcast) {
-    const clusterPorts = ['5173', '5174'];
-    clusterPorts.forEach((port) => {
-      fetch(`http://127.0.0.1:${port}/api/internal-broadcast`, {
+    const peers = (process.env.CLUSTER_PEERS || '127.0.0.1:5173,127.0.0.1:5174')
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    peers.forEach((peer) => {
+      fetch(`http://${peer}/api/internal-broadcast`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
