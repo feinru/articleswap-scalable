@@ -2,48 +2,42 @@
 
 Distributed event-driven article exchange platform built with **SvelteKit**, **Node.js microservices**, **Apache Kafka**, **PostgreSQL**, **MinIO**, and **Nginx**. Submitted articles flow through an asynchronous pipeline that stems text, generates a word cloud, and pushes the result to the recipient in real time.
 
-> Project brief: `docs/project (1).pdf`. Per-service docs live under `docs/0X-*.md`.
-
 ## High-Level Architecture
 
-```
-┌──────────┐  POST /api/articles   ┌──────────────────┐
-│ Frontend │ ────────────────────► │ API Gateway × N   │  Nginx LB → /api/*
-│ (Svelte) │                       │ + Article Service│
-└────┬─────┘                       └────────┬─────────┘
-     │  GET /api/receive (SSE)            │ publish
-     │◄───────────────────────────────────┤
-     │                                    ▼
-     │                         ┌────────────────────┐
-     │                         │ Kafka: article-    │
-     │                         │  submissions        │
-     │                         └────────┬───────────┘
-     │                                  ▼
-     │                         ┌────────────────────┐
-     │                         │ Stemming Service   │  SastrawiJS + Porter
-     │                         └────────┬───────────┘
-     │                                  │  article-stemmed
-     │                                  ▼
-     │                         ┌────────────────────┐
-     │                         │ Word Cloud Service │  → MinIO bucket
-     │                         └────────┬───────────┘
-     │                                  │  article-wordcloud-generated
-     │                                  ▼
-     │                         ┌────────────────────┐
-     │  SSE push: "artikel     │ Forwarding-Inbox   │  marks DELIVERED
-     │  delivered"             │ Service            │
-     │◄────────────────────────┴────────┬───────────┘
-     │                                   │  article-delivered
-     ▼
- Receiver sees full article + stemmed text + wordcloud image
+```mermaid
+flowchart LR
+    User[User Browser] -- POST /api/articles --> Nginx[Nginx LB]
+    Nginx -- "/api/*" --> Article[Article Service<br/>Express :3000]
+    Nginx -- "/" --> Gateway[API Gateway ×N<br/>SvelteKit :5173]
+
+    Article -- produce --> T0[(Kafka<br/>article-submissions)]
+    T0 -- consume --> Stem[Stemming Service<br/>SastrawiJS + Porter]
+    Stem -- produce --> T1[(Kafka<br/>article-stemmed)]
+    T1 -- consume --> Word[Word Cloud Service<br/>SVG + MinIO]
+    Word -- produce --> T2[(Kafka<br/>article-wordcloud-generated)]
+    T2 -- consume --> Inbox[Forwarding-Inbox Service<br/>marks DELIVERED]
+    Inbox -- produce --> T3[(Kafka<br/>article-delivered)]
+    T3 -- consume --> Gateway
+    Gateway -- SSE /api/receive --> User
+
+    Stem --> DB[(Postgres<br/>article_processing)]
+    Word --> Minio[(MinIO<br/>bucket: wordclouds)]
+    Inbox --> DB
 ```
 
 ### Article status state machine
 
-```
-PENDING ──► STEMMED ──► WORDCLOUD_GENERATED ──► DELIVERED
-   │           │                │                  │
-   └─► FAILED ◄┴────────────────┴──────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> STEMMED
+    STEMMED --> WORDCLOUD_GENERATED
+    WORDCLOUD_GENERATED --> DELIVERED
+    DELIVERED --> [*]
+    PENDING --> FAILED
+    STEMMED --> FAILED
+    WORDCLOUD_GENERATED --> FAILED
+    FAILED --> [*]
 ```
 
 ## Repository Layout
@@ -57,7 +51,6 @@ PENDING ──► STEMMED ──► WORDCLOUD_GENERATED ──► DELIVERED
 | `services/forwarding-inbox-service/` | Final delivery + DB write | |
 | `nginx/` | LB config | `proxy_buffering off` for SSE |
 | `docker-compose.yml` | Full stack orchestration | Kafka KRaft, Postgres, Redis, MinIO, Kafka UI |
-| `docs/` | Per-service spec, project brief, stress test script | |
 | `.github/workflows/` | CI/CD pipelines | See *CI / CD* below |
 
 ## Services Overview
@@ -79,6 +72,20 @@ PENDING ──► STEMMED ──► WORDCLOUD_GENERATED ──► DELIVERED
 - `stemToken(token, fallback)` — runs SastrawiJS for ID, natural Porter for EN, preserves technical terms (`kafka`, `redis`, `docker`, `postgres`, `scalable`, `storage`, `recycle`, …).
 - `stemMixedLanguageText(text)` — tokenizes, detects majority language, stems per token.
 
+```mermaid
+flowchart LR
+    A[Raw text] --> B(tokenizeText)
+    B --> C{Detect language<br/>per token}
+    C -- "ID cues" --> D[SastrawiJS]
+    C -- "EN cues" --> E[Porter Stemmer]
+    C -- "Technical" --> F[Keep original]
+    C -- "Unknown" --> G[Majority fallback]
+    D --> H[stemmed text]
+    E --> H
+    F --> H
+    G --> H
+```
+
 Example:
 
 ```text
@@ -94,6 +101,20 @@ npm test
 ```
 
 ## Performance & Safety Add-Ons
+
+```mermaid
+flowchart LR
+    Client[Client IP] --> RL[Rate limit<br/>express-rate-limit]
+    RL -->|Allowed| Express[Express router]
+    RL -->|Throttled| E429[429 Too Many Requests]
+    Express --> Cache[In-memory TTL+LRU cache]
+    Cache -->|miss| DB[(Postgres)]
+    Cache -->|hit| Resp[Response]
+    Express --> CB[Circuit Breaker]
+    CB -->|closed| KP[Kafka publisher]
+    CB -->|open| Fail[Reject early]
+    KP --> T0[(Kafka)]
+```
 
 - **IP rate limit on `POST /api/articles`** via `express-rate-limit` (`RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`).
 - **`TRUST_PROXY`** opt-in for `X-Forwarded-For` behind Nginx.
@@ -184,25 +205,55 @@ SSE stream of newly delivered articles.
 
 Liveness probe.
 
-## Stress Testing (k6)
+## Production Deploy (pull from GHCR)
 
-`docs/stress-article-submissions.k6.js` posts PDFs from `docs/` as base64 with the k6 `setResponseCallback(expectedStatuses({min:200,max:202}, 429))` so `429` rate-limit responses are expected and not counted as failures.
+Use `docker-compose.prod.yml` + `scripts/deploy-prod.sh`.
 
-```bash
-cd docs
-k6 inspect stress-article-submissions.k6.js
-k6 run stress-article-submissions.k6.js
+```mermaid
+flowchart LR
+    Start[deploy-prod.sh] --> Login[docker login GHCR]
+    Login --> Fresh[ensure-images-fresh.mjs]
+    Fresh --> Pull[docker pull<br/>each image]
+    Pull --> Digest[Compare local digest<br/>vs GHCR]
+    Digest -->|changed| Up[docker compose -d up]
+    Digest -->|unchanged| Skip[abort: no new image]
 ```
 
-Override defaults via env:
+One-time setup:
 
 ```bash
-STRESS_URL=http://localhost:8080/api/articles \
-STRESS_VUS=50 STRESS_RAMP_UP=30s STRESS_HOLD=2m STRESS_RAMP_DOWN=30s \
-k6 run stress-article-submissions.k6.js
+cp .env.prod.example .env.prod
+# adjust IMAGE_NAMESPACE, IMAGE_TAG, secrets
+export GHCR_USER=feinru GHCR_TOKEN=<ghcr PAT or github token>
+```
+
+Deploy:
+
+```bash
+./scripts/deploy-prod.sh
+# or pin a specific commit
+IMAGE_TAG=sha-1fe398b ./scripts/deploy-prod.sh
+```
+
+The freshness check pulls every image, compares the local `RepoDigests` against GHCR, and only calls `docker compose up -d` when at least one image actually moved. If nothing changed it exits `2` and skips the restart.
+
+`docker-compose.prod.yml` defines `image:` per service from `IMAGE_*` env vars, with `pull_policy: always`. Override at deploy time:
+
+```bash
+IMAGE_TAG=sha-1fe398b docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 ```
 
 ## CI / CD (GitHub Actions + GHCR)
+
+```mermaid
+flowchart LR
+    Push[push / pull_request] --> WF[images.yml]
+    WF --> Matrix[Matrix:<br/>api-gateway, article,<br/>stemming, wordcloud,<br/>forwarding-inbox]
+    Matrix --> Build[docker buildx build]
+    Build -->|PR| Check[Verify build only]
+    Build -->|push| Login[Login to GHCR]
+    Login --> Push2[Push to ghcr.io]
+```
 
 `.github/workflows/images.yml` builds every Dockerfile on push/PR to `main`, tags images with the commit SHA, branch name, and `latest`, then pushes to `ghcr.io/<owner>/articleswap-<service>`. Each service image is independently pullable:
 
@@ -215,16 +266,6 @@ docker pull ghcr.io/<owner>/articleswap-forwarding-inbox-service:latest
 ```
 
 Required secret: `GITHUB_TOKEN` (provided automatically). The workflow uses it to authenticate to GHCR.
-
-## Project Brief Reference
-
-| Spec area | Where in repo |
-|---|---|
-| Anggota 1 — API gateway & article service | `api-gateway/`, `services/article-service/`, `docs/01-api-gateway-article-service.md` |
-| Anggota 2 — Stemming | `services/stemming-service/`, `docs/02-stemming-service.md` |
-| Anggota 3 — Word cloud | `services/wordcloud-service/`, `docs/03-wordcloud-service.md` |
-| Anggota 4 — Forwarding & inbox | `services/forwarding-inbox-service/`, `docs/04-forwarding-inbox-service.md` |
-| Anggota 5 — Infrastructure | `docker-compose.yml`, `nginx/`, `docs/05-infrastructure.md` |
 
 ## Pitfalls & Notes
 

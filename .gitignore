@@ -1,6 +1,9 @@
-# Keep docs/ tracked. Exclude heavy caches and large binary references only.
+# Ignore docs/ contents except files authored in this repo.
+docs/*
+!docs/stress-article-submissions.k6.js
+!docs/0*.md
 docs/.playwright-mcp/
 /nginx_runtime/
 .env
+.env.prod
 node_modules/
-docs/
