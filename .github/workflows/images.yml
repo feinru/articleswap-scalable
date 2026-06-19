@@ -9,7 +9,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository_owner }}/articleswap
+  IMAGE_PREFIX: ${{ github.repository_owner }}/articleswap-
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
@@ -62,7 +62,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=sha,prefix=sha-,format=short
+            type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
