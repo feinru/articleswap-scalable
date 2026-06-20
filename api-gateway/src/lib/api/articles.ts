@@ -100,7 +100,7 @@ export async function submitArticle(payload: SubmitArticlePayload): Promise<Subm
  * Fetches a single article by id. Returns null if 404.
  */
 export async function getArticle(id: string): Promise<ArticleDetail | null> {
-  const res = await fetch(`${API_BASE}/api/articles/${encodeURIComponent(id)}`);
+  const res = await fetch(`${API_BASE}/api/articles/${encodeURIComponent(id)}?noCache=true`);
   if (res.status === 404) return null;
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -140,6 +140,7 @@ export async function listArticles(filters: ListArticlesFilters = {}): Promise<L
   if (filters.sender) params.set('sender', filters.sender);
   if (filters.receiver) params.set('receiver', filters.receiver);
   if (filters.status) params.set('status', filters.status);
+  params.set('noCache', 'true');
 
   const qs = params.toString();
   const url = `${API_BASE}/api/articles${qs ? `?${qs}` : ''}`;

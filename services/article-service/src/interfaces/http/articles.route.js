@@ -73,8 +73,10 @@ export function createArticlesRoute({ submitArticleUseCase, getArticleUseCase, l
     }
     try {
       const cacheKey = `list:${JSON.stringify(req.query)}`;
-      const cached = readCache?.get(cacheKey);
-      if (cached) return res.json({ ...cached, cached: true });
+      if (req.query.noCache !== 'true') {
+        const cached = readCache?.get(cacheKey);
+        if (cached) return res.json({ ...cached, cached: true });
+      }
 
       const { limit, offset, sender, receiver, status } = req.query;
       const result = await listArticlesUseCase.execute({
@@ -96,8 +98,10 @@ export function createArticlesRoute({ submitArticleUseCase, getArticleUseCase, l
   router.get('/articles/:id', async (req, res) => {
     try {
       const cacheKey = `article:${req.params.id}`;
-      const cached = readCache?.get(cacheKey);
-      if (cached) return res.json({ ...cached, cached: true });
+      if (req.query.noCache !== 'true') {
+        const cached = readCache?.get(cacheKey);
+        if (cached) return res.json({ ...cached, cached: true });
+      }
 
       const article = await getArticleUseCase.execute(req.params.id);
       if (!article) {

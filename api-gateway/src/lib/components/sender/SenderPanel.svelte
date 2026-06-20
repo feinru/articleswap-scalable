@@ -58,6 +58,7 @@
   let recentError = $state((() => initialRecentError)());
 
   let fileInputEl = $state<HTMLInputElement | null>(null);
+  let expandedStemming = $state<string | null>(null);
 
   $effect(() => {
     recent = initialRecent;
@@ -102,14 +103,10 @@
   }
 
   function statusColor(s: string): string {
-    switch (s) {
-      case "PENDING": return "#f59e0b";
-      case "STEMMED": return "#3b82f6";
-      case "WORDCLOUD_GENERATED": return "#8b5cf6";
-      case "DELIVERED": return "#10b981";
-      case "FAILED": return "#ef4444";
-      default: return "#6b7280";
-    }
+    // We now rely on pure CSS and strict black/white borders, but we can return
+    // black for delivered and white for pending if needed.
+    // Actually we will just remove the inline style below.
+    return "#ffffff";
   }
 
   function progressForStatus(s?: string): { percent: number; label: string; done: boolean } {
@@ -414,17 +411,22 @@
       </div>
       <div class="alert-content">
         <p class="alert-message">{statusMessage}</p>
+        
         {#if statusDetail}
-          <p class="alert-detail">{statusDetail}</p>
+          <div class="success-banner">
+            <p class="alert-detail">{statusDetail}</p>
+          </div>
         {/if}
+        
         {#if status === "submitting" || progressPercent > 0}
           <div class="progress-wrap" aria-label="Progress pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent}>
             <div class="progress-bar" style="width: {progressPercent}%"></div>
           </div>
           <p class="progress-text">{progressPercent}% — {progressLabel}</p>
         {/if}
+        
         {#if articleId && status === "success"}
-          <code class="article-id">ID: {articleId}</code>
+          <code class="article-id" style="margin-top: 0.5rem;">ID: {articleId}</code>
           {#if lastFetched}
             <div class="db-record">
               <strong>DB record:</strong>
@@ -443,7 +445,7 @@
 <section class="card panel recent-panel">
   <div class="panel-header-badge sender-badge">Recent</div>
   <div class="recent-header">
-    <h3>Artikel Terbaru</h3>
+    <h2>Artikel Terbaru</h2>
     <button
       type="button"
       class="refresh-btn"
@@ -478,40 +480,57 @@
     <ul class="recent-list">
       {#each recent as article (article.id)}
         <li class="recent-item">
-          <div class="recent-main">
-            <div class="recent-title-row">
-              <span class="recent-title">{article.title}</span>
-              {#if article.has_file}
-                <span class="file-badge">[FILE] {article.file_name ?? '?'}</span>
-              {:else}
-                <span class="text-badge">[TEXT]</span>
+          <div class="recent-item-content">
+            <div class="recent-main">
+              <div class="recent-title-row">
+                <span class="recent-title">{article.title}</span>
+                {#if article.has_file}
+                  <span class="file-badge">[FILE] {article.file_name ?? '?'}</span>
+                {:else}
+                  <span class="text-badge">[TEXT]</span>
+                {/if}
+              </div>
+              <div class="recent-meta">
+                <span><strong>{article.sender}</strong> &rarr; <strong>{article.receiver}</strong></span>
+                <span class="separator">//</span>
+                <span>{formatDate(article.created_at)}</span>
+              </div>
+            </div>
+            <div class="recent-side">
+              <span class="status-pill">
+                [{article.status}]
+              </span>
+              {#if article.stemmed_content}
+                <button
+                  type="button"
+                  class="wordcloud-result-btn link-btn"
+                  onclick={() => expandedStemming = expandedStemming === article.id ? null : article.id}
+                  aria-label={`Lihat hasil stemming untuk ${article.title}`}
+                >
+                  [{expandedStemming === article.id ? 'Tutup Stemming' : 'Lihat Stemming'}]
+                </button>
               {/if}
-            </div>
-            <div class="recent-meta">
-              <span><strong>{article.sender}</strong> → <strong>{article.receiver}</strong></span>
-              <span class="dot">·</span>
-              <span>{formatDate(article.created_at)}</span>
+              {#if article.wordcloud_url}
+                <a
+                  class="wordcloud-result-btn"
+                  href={article.wordcloud_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Lihat hasil wordcloud untuk ${article.title}`}
+                >
+                  [Lihat Wordcloud]
+                </a>
+              {/if}
+              <code class="mini-id" title={article.id}>
+                {article.id.slice(0, 8)}…
+              </code>
             </div>
           </div>
-          <div class="recent-side">
-            <span class="status-pill" style="background: {statusColor(article.status)}">
-              {article.status}
-            </span>
-            {#if article.wordcloud_url}
-              <a
-                class="wordcloud-result-btn"
-                href={article.wordcloud_url}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Lihat hasil wordcloud untuk ${article.title}`}
-              >
-                Lihat Wordcloud
-              </a>
-            {/if}
-            <code class="mini-id" title={article.id}>
-              {article.id.slice(0, 8)}…
-            </code>
-          </div>
+          {#if expandedStemming === article.id && article.stemmed_content}
+            <div class="stemming-expanded-box" transition:slide={{ duration: 200 }}>
+              <pre>{article.stemmed_content}</pre>
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -521,9 +540,6 @@
 <style>
   @import "./SenderPanel.css";
 
-  .recent-panel {
-    margin-top: 1.5rem;
-  }
   .tab-radio {
     position: absolute;
     opacity: 0;
@@ -558,14 +574,24 @@
   .refresh-btn {
     padding: 0.4rem 0.8rem;
     font-size: 0.85rem;
-    border-radius: 6px;
-    border: 1px solid #d1d5db;
-    background: white;
+    border-radius: 0px;
+    border: 1.5px solid #000000;
+    background: #ffffff;
+    color: #000000;
+    font-weight: 700;
     cursor: pointer;
+    box-shadow: 2px 2px 0px rgba(0,0,0,1);
+    transition: all 0.2s ease;
+  }
+  .refresh-btn:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0px rgba(0,0,0,1);
   }
   .refresh-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
   }
   .recent-list {
     list-style: none;
@@ -573,17 +599,23 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
   }
   .recent-item {
     display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.8rem 0;
+    border-bottom: 1.5px dashed #000000;
+    gap: 0.5rem;
+  }
+  .recent-item-content {
+    display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
     gap: 1rem;
+  }
+  .recent-item:last-child {
+    border-bottom: none;
   }
   .recent-main {
     flex: 1;
@@ -591,77 +623,83 @@
   }
   .recent-title-row {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.5rem;
     flex-wrap: wrap;
+    margin-bottom: 0.2rem;
   }
   .recent-title {
-    font-weight: 600;
-    color: #111827;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #000000;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 280px;
+    max-width: 250px;
   }
   .file-badge, .text-badge {
-    font-size: 0.7rem;
-    padding: 0.15rem 0.45rem;
-    border-radius: 4px;
+    font-size: 0.8rem;
     font-weight: 600;
-  }
-  .file-badge {
-    background: #ddd6fe;
-    color: #5b21b6;
-  }
-  .text-badge {
-    background: #d1fae5;
-    color: #065f46;
+    color: #525252;
   }
   .recent-meta {
     font-size: 0.8rem;
-    color: #6b7280;
-    margin-top: 0.2rem;
+    color: #737373;
     display: flex;
     gap: 0.4rem;
     flex-wrap: wrap;
   }
-  .dot { opacity: 0.5; }
+  .separator { opacity: 0.5; font-weight: 700; }
   .recent-side {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 0.25rem;
+    gap: 0.4rem;
   }
   .status-pill {
-    color: white;
-    font-size: 0.7rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 999px;
+    font-size: 0.8rem;
     font-weight: 700;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.05em;
+    color: #000000;
   }
   .mini-id {
     font-family: monospace;
     font-size: 0.7rem;
-    color: #6b7280;
+    color: #a3a3a3;
   }
   .wordcloud-result-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.3rem 0.55rem;
-    border-radius: 999px;
-    background: #eef2ff;
-    color: #4338ca;
-    border: 1px solid #c7d2fe;
-    font-size: 0.72rem;
-    font-weight: 800;
-    text-decoration: none;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #000000;
+    text-decoration: underline;
+    text-underline-offset: 2px;
     white-space: nowrap;
+    transition: all 0.2s ease;
   }
   .wordcloud-result-btn:hover {
-    background: #4338ca;
-    color: #ffffff;
+    color: #525252;
+  }
+  .link-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    display: inline-block;
+  }
+  .stemming-expanded-box {
+    background: #fafafa;
+    border: 1.5px solid #000000;
+    padding: 0.8rem;
+    margin-top: 0.5rem;
+  }
+  .stemming-expanded-box pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: #525252;
   }
   .spinner-sm {
     display: inline-block;
@@ -678,13 +716,13 @@
     width: 100%;
     height: 12px;
     margin-top: 0.75rem;
-    border: 1px solid #d1d5db;
-    background: #f3f4f6;
+    border: 1.5px solid #000000;
+    background: #ffffff;
     overflow: hidden;
   }
   .progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #111827, #2563eb, #10b981);
+    background: #000000;
     transition: width 0.3s ease;
   }
   .progress-text {
