@@ -1,4 +1,5 @@
 import { Article, ValidationError } from '../domain/Article.js';
+import { sanitizeSubmitPayload } from '../domain/sanitizeText.js';
 import { extractPdfText } from '../infrastructure/pdf/extractPdfText.js';
 
 export class SubmitArticle {
@@ -8,13 +9,13 @@ export class SubmitArticle {
   }
 
   async execute(payload) {
-    if (!payload?.title || (!payload.content && !payload.fileData) || !payload.sender || !payload.receiver) {
+    const normalizedPayload = sanitizeSubmitPayload(payload || {});
+    if (!normalizedPayload.title || (!normalizedPayload.content && !normalizedPayload.fileData) || !normalizedPayload.sender || !normalizedPayload.receiver) {
       throw new ValidationError('Missing required fields: title, sender, receiver, and either content or a file');
     }
 
-    const normalizedPayload = { ...payload };
     if (normalizedPayload.fileData && !normalizedPayload.content) {
-      normalizedPayload.content = await extractPdfText(normalizedPayload.fileData);
+      normalizedPayload.content = sanitizeSubmitPayload({ content: await extractPdfText(normalizedPayload.fileData) }).content;
       if (!normalizedPayload.content) {
         throw new ValidationError('PDF text extraction returned empty content');
       }
@@ -41,7 +42,7 @@ export class SubmitArticle {
 
     try {
       await this.eventPublisher.publish({
-        topic: process.env.KAFKA_TOPIC || 'article-submissions',
+        topic: process.env.RABBITMQ_QUEUE || 'article-submissions',
         key: article.id,
         value: article.toEventPayload()
       });

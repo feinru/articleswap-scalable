@@ -11,7 +11,9 @@ npm run dev
 ```
 
 ## Env
-- `KAFKA_BROKERS`
+- `RABBITMQ_URL`
+- `RABBITMQ_CONSUMER_NAME`
+- `RABBITMQ_PREFETCH`
 - `DATABASE_URL`
 - `CONSUME_TOPIC` — default: `article-wordcloud-generated`
 - `PRODUCE_TOPIC` — default: `article-delivered`

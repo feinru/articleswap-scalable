@@ -1,7 +1,7 @@
 import 'dotenv/config';
-import { KafkaEventPublisher } from './infrastructure/messaging/KafkaEventPublisher.js';
-import { KafkaEventConsumer } from './infrastructure/messaging/KafkaEventConsumer.js';
-import { KafkaTopicEnsurer } from './infrastructure/kafka/KafkaTopicEnsurer.js';
+import { RabbitMQEventPublisher } from './infrastructure/messaging/RabbitMQEventPublisher.js';
+import { RabbitMQEventConsumer } from './infrastructure/messaging/RabbitMQEventConsumer.js';
+import { RabbitMQQueueEnsurer } from './infrastructure/messaging/RabbitMQQueueEnsurer.js';
 import { createArticleHandler } from './interfaces/messaging/handler.js';
 import pg from 'pg';
 import { PostgresDeliveryRepository } from './infrastructure/persistence/PostgresDeliveryRepository.js';
@@ -9,26 +9,20 @@ import { PostgresDeliveryRepository } from './infrastructure/persistence/Postgre
 const SERVICE = 'forwarding-inbox-service';
 
 async function main() {
-  const brokers = process.env.KAFKA_BROKERS || 'localhost:9092';
+  const rabbitmqUrl = process.env.RABBITMQ_URL || 'amqp://rabbitmq:5672';
   const consumeTopic = process.env.CONSUME_TOPIC || 'article-wordcloud-generated';
   const produceTopic = process.env.PRODUCE_TOPIC || 'article-delivered';
   const databaseUrl = process.env.DATABASE_URL;
 
-  const eventPublisher = new KafkaEventPublisher({
-    brokers,
-    clientId: `${SERVICE}-publisher`
+  const eventPublisher = new RabbitMQEventPublisher({ url: rabbitmqUrl });
+
+  const rabbitmqConsumer = new RabbitMQEventConsumer({
+    url: rabbitmqUrl,
+    groupId: process.env.RABBITMQ_CONSUMER_NAME || SERVICE,
+    prefetch: Number(process.env.RABBITMQ_PREFETCH || 1)
   });
 
-  const kafkaConsumer = new KafkaEventConsumer({
-    brokers,
-    clientId: `${SERVICE}-consumer`,
-    groupId: process.env.KAFKA_CONSUMER_GROUP || SERVICE
-  });
-
-  const topicEnsurer = new KafkaTopicEnsurer({
-    brokers,
-    clientId: `${SERVICE}-admin`
-  });
+  const queueEnsurer = new RabbitMQQueueEnsurer({ url: rabbitmqUrl });
 
   let deliveryRepository = null;
   if (databaseUrl) {
@@ -46,8 +40,8 @@ async function main() {
 
   const handler = createArticleHandler({
     eventPublisher,
-    kafkaConsumer,
-    topicEnsurer,
+    eventConsumer: rabbitmqConsumer,
+    queueEnsurer,
     consumeTopic,
     produceTopic,
     deliveryRepository

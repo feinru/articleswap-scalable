@@ -9,10 +9,10 @@ export class StemArticle {
     this.stemmer = stemmer;
   }
 
-  async execute(article) {
+  async execute(article, { heartbeat, yieldEveryTokens = 100 } = {}) {
     const stemmedContent = this.stemmer
       ? await this.stemmer(article.content)
-      : stemMixedLanguageText(article.content || '');
+      : await stemMixedLanguageTextAsync(article.content || '', { heartbeat, yieldEveryTokens });
 
     return {
       ...article,
@@ -46,7 +46,7 @@ const ENGLISH_COMMON_WORDS = new Set([
 ]);
 
 const TECHNICAL_TERMS = new Set([
-  'api', 'kafka', 'redis', 'docker', 'postgres', 'postgresql', 'scalable', 'cloud',
+  'api', 'rabbitmq', 'redis', 'docker', 'postgres', 'postgresql', 'scalable', 'cloud',
   'worker', 'gateway', 'http', 'https', 'json', 'sql', 'nosql', 'node', 'nodejs',
   'javascript', 'typescript', 'react', 'vue', 'nextjs', 'express',
   'database', 'db', 'url', 'uri', 'email', 'oauth', 'jwt', 'uuid', 'id', 'cpu', 'ram',
@@ -106,6 +106,28 @@ export function stemMixedLanguageText(text) {
   return tokens
     .map((token) => isWordToken(token) ? stemToken(token, fallbackLanguage) : token)
     .join('');
+}
+
+export async function stemMixedLanguageTextAsync(text, { heartbeat, yieldEveryTokens = 100 } = {}) {
+  const tokens = tokenizeText(text);
+  const fallbackLanguage = getMajorityLanguage(tokens);
+  const output = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    output.push(isWordToken(token) ? stemToken(token, fallbackLanguage) : token);
+
+    if (index > 0 && index % yieldEveryTokens === 0) {
+      await heartbeat?.();
+      await yieldToEventLoop();
+    }
+  }
+
+  return output.join('');
+}
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function getMajorityLanguage(tokens) {

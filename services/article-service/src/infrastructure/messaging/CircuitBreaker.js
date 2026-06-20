@@ -9,7 +9,7 @@ export class CircuitBreaker {
 
   async execute(operation) {
     if (this.isOpen()) {
-      const error = new Error('Kafka publisher circuit breaker is open');
+    const error = new Error('RabbitMQ publisher circuit breaker is open');
       error.code = 'CIRCUIT_OPEN';
       throw error;
     }

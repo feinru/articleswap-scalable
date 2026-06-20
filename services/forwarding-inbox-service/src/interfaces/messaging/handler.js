@@ -1,15 +1,15 @@
 import { DeliverArticle } from '../../usecases/DeliverArticle.js';
 
-export function createArticleHandler({ eventPublisher, kafkaConsumer, topicEnsurer, consumeTopic, produceTopic, deliveryRepository, logger = console }) {
+export function createArticleHandler({ eventPublisher, eventConsumer, queueEnsurer, consumeTopic, produceTopic, deliveryRepository, logger = console }) {
   const useCase = new DeliverArticle();
 
   return {
     async start() {
       await Promise.all([
-        topicEnsurer.ensure(consumeTopic),
-        topicEnsurer.ensure(produceTopic)
+        queueEnsurer.ensure(consumeTopic),
+        queueEnsurer.ensure(produceTopic)
       ]);
-      await kafkaConsumer.subscribe({
+      await eventConsumer.subscribe({
         topic: consumeTopic,
         handler: async (article) => {
           const result = await useCase.execute(article);

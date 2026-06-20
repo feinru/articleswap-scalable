@@ -1,7 +1,7 @@
 import { GenerateWordCloud } from '../../usecases/GenerateWordCloud.js';
 import { MinioObjectStorage } from '../../infrastructure/storage/MinioObjectStorage.js';
 
-export function createArticleHandler({ eventPublisher, kafkaConsumer, topicEnsurer, consumeTopic, produceTopic, publicBaseUrl, processingRepository, logger = console }) {
+export function createArticleHandler({ eventPublisher, eventConsumer, queueEnsurer, consumeTopic, produceTopic, publicBaseUrl, processingRepository, logger = console }) {
   const objectStorage = new MinioObjectStorage({
     endPoint: process.env.MINIO_ENDPOINT,
     port: process.env.MINIO_PORT,
@@ -16,10 +16,10 @@ export function createArticleHandler({ eventPublisher, kafkaConsumer, topicEnsur
   return {
     async start() {
       await Promise.all([
-        topicEnsurer.ensure(consumeTopic),
-        topicEnsurer.ensure(produceTopic)
+        queueEnsurer.ensure(consumeTopic),
+        queueEnsurer.ensure(produceTopic)
       ]);
-      await kafkaConsumer.subscribe({
+      await eventConsumer.subscribe({
         topic: consumeTopic,
         handler: async (article) => {
           const result = await useCase.execute(article);

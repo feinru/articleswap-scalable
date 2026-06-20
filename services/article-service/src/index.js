@@ -5,8 +5,8 @@ import { createArticlesRoute } from './interfaces/http/articles.route.js';
 import { SubmitArticle } from './usecases/SubmitArticle.js';
 import { GetArticle } from './usecases/GetArticle.js';
 import { ListArticles } from './usecases/ListArticles.js';
-import { KafkaEventPublisher } from './infrastructure/messaging/KafkaEventPublisher.js';
-import { KafkaTopicEnsurer } from './infrastructure/kafka/KafkaTopicEnsurer.js';
+import { RabbitMQEventPublisher } from './infrastructure/messaging/RabbitMQEventPublisher.js';
+import { RabbitMQQueueEnsurer } from './infrastructure/messaging/RabbitMQQueueEnsurer.js';
 import { PostgresArticleRepository } from './infrastructure/persistence/PostgresArticleRepository.js';
 import { runMigrations } from './infrastructure/persistence/migrate.js';
 import { createArticleSubmitRateLimiter } from './infrastructure/http/rateLimit.js';
@@ -15,22 +15,16 @@ import { TtlCache } from './infrastructure/cache/TtlCache.js';
 const SERVICE = 'article-service';
 
 async function main() {
-  const brokers = process.env.KAFKA_BROKERS || 'localhost:9092';
-  const topic = process.env.KAFKA_TOPIC || 'article-submissions';
+  const rabbitmqUrl = process.env.RABBITMQ_URL || 'amqp://rabbitmq:5672';
+  const queue = process.env.RABBITMQ_QUEUE || 'article-submissions';
   const databaseUrl = process.env.DATABASE_URL;
 
-  const eventPublisher = new KafkaEventPublisher({
-    brokers,
-    clientId: process.env.KAFKA_CLIENT_ID || SERVICE
-  });
+  const eventPublisher = new RabbitMQEventPublisher({ url: rabbitmqUrl });
 
-  const topicEnsurer = new KafkaTopicEnsurer({
-    brokers,
-    clientId: `${SERVICE}-admin`
-  });
+  const queueEnsurer = new RabbitMQQueueEnsurer({ url: rabbitmqUrl });
 
   await Promise.all([
-    topicEnsurer.ensure(topic),
+    queueEnsurer.ensure(queue),
     eventPublisher.connect()
   ]);
 

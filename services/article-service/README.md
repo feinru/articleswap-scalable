@@ -1,12 +1,12 @@
 # Article Service
 
-Service backend khusus untuk submission artikel. Publish ke Kafka topic `article-submissions`, downstream services (stemming, wordcloud, forwarding-inbox) consume & process.
+Service backend khusus untuk submission artikel. Publish ke RabbitMQ queue `article-submissions`, downstream services (stemming, wordcloud, forwarding-inbox) consume & process.
 
 **Tanggung jawab:**
 - Terima `POST /api/articles` (JSON body)
 - Validasi field wajib (title, sender, receiver, content atau file)
 - Generate `articleId` (UUID v4)
-- Publish ke Kafka
+- Publish ke RabbitMQ
 - Return `202 Accepted` + `articleId`
 
 **Tidak termasuk:**
@@ -48,9 +48,8 @@ npm run dev
 ```
 
 ## Env
-- `KAFKA_BROKERS` — comma-separated broker list
-- `KAFKA_TOPIC` — default `article-submissions`
-- `KAFKA_CLIENT_ID` — default `article-service`
+- `RABBITMQ_URL` — AMQP connection URL
+- `RABBITMQ_QUEUE` — default `article-submissions`
 - `PORT` — default `3000`
 - `HOST` — default `0.0.0.0`
 

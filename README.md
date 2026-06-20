@@ -1,6 +1,6 @@
 # ArticleSwap
 
-Distributed event-driven article exchange platform built with **SvelteKit**, **Node.js microservices**, **Apache Kafka**, **PostgreSQL**, **MinIO**, and **Nginx**. Submitted articles flow through an asynchronous pipeline that stems text, generates a word cloud, and pushes the result to the recipient in real time.
+Distributed event-driven article exchange platform built with **SvelteKit**, **Node.js microservices**, **RabbitMQ**, **PostgreSQL**, **MinIO**, and **Nginx**. Submitted articles flow through an asynchronous pipeline that stems text, generates a word cloud, and pushes the result to the recipient in real time.
 
 ## High-Level Architecture
 
@@ -10,13 +10,13 @@ flowchart LR
     Nginx -- "/api/*" --> Article[Article Service<br/>Express :3000]
     Nginx -- "/" --> Gateway[API Gateway ×N<br/>SvelteKit :5173]
 
-    Article -- produce --> T0[(Kafka<br/>article-submissions)]
+    Article -- publish --> T0[(RabbitMQ queue<br/>article-submissions)]
     T0 -- consume --> Stem[Stemming Service<br/>SastrawiJS + Porter]
-    Stem -- produce --> T1[(Kafka<br/>article-stemmed)]
+    Stem -- publish --> T1[(RabbitMQ queue<br/>article-stemmed)]
     T1 -- consume --> Word[Word Cloud Service<br/>SVG + MinIO]
-    Word -- produce --> T2[(Kafka<br/>article-wordcloud-generated)]
+    Word -- publish --> T2[(RabbitMQ queue<br/>article-wordcloud-generated)]
     T2 -- consume --> Inbox[Forwarding-Inbox Service<br/>marks DELIVERED]
-    Inbox -- produce --> T3[(Kafka<br/>article-delivered)]
+    Inbox -- publish --> T3[(RabbitMQ fanout<br/>article-delivered.exchange)]
     T3 -- consume --> Gateway
     Gateway -- SSE /api/receive --> User
 
@@ -44,24 +44,24 @@ stateDiagram-v2
 
 | Path | Role | Notes |
 |---|---|---|
-| `api-gateway/` | SvelteKit UI + SSE + Kafka consumer | Port 5173, scaled to 2 instances behind Nginx |
-| `services/article-service/` | Express HTTP entry + Kafka producer | Port 3000 |
+| `api-gateway/` | SvelteKit UI + SSE + RabbitMQ fanout consumer | Port 5173, scaled to 2 instances behind Nginx |
+| `services/article-service/` | Express HTTP entry + RabbitMQ publisher | Port 3000 |
 | `services/stemming-service/` | Mixed ID/EN per-token stemmer | SastrawiJS + natural Porter |
 | `services/wordcloud-service/` | SVG word cloud generator + MinIO upload | |
 | `services/forwarding-inbox-service/` | Final delivery + DB write | |
 | `nginx/` | LB config | `proxy_buffering off` for SSE |
-| `docker-compose.yml` | Full stack orchestration | Kafka KRaft, Postgres, Redis, MinIO, Kafka UI |
+| `docker-compose.yml` | Full stack orchestration | RabbitMQ, Postgres, Redis, MinIO |
 | `.github/workflows/` | CI/CD pipelines | See *CI / CD* below |
 
 ## Services Overview
 
 | Service | Owner (per project brief) | Inputs | Outputs | Tests |
 |---|---|---|---|---|
-| API Gateway + Article Service | Anggota 1 | `POST /api/articles` (text or PDF) | Kafka `article-submissions`, SSE to receiver | svelte-check, manual |
-| Stemming Service | Anggota 2 | Kafka `article-submissions` | DB row, Kafka `article-stemmed` | `node --test` |
-| Word Cloud Service | Anggota 3 | Kafka `article-stemmed` | MinIO object, Kafka `article-wordcloud-generated` | manual |
-| Forwarding + Inbox Service | Anggota 4 | Kafka `article-wordcloud-generated` | DB row, Kafka `article-delivered` | manual |
-| Infrastructure | Anggota 5 | – | Kafka, Postgres, Redis, MinIO, Nginx, Kafka UI | manual |
+| API Gateway + Article Service | Anggota 1 | `POST /api/articles` (text or PDF) | RabbitMQ `article-submissions`, SSE to receiver | svelte-check, manual |
+| Stemming Service | Anggota 2 | RabbitMQ `article-submissions` | DB row, RabbitMQ `article-stemmed` | `node --test` |
+| Word Cloud Service | Anggota 3 | RabbitMQ `article-stemmed` | MinIO object, RabbitMQ `article-wordcloud-generated` | manual |
+| Forwarding + Inbox Service | Anggota 4 | RabbitMQ `article-wordcloud-generated` | DB row, RabbitMQ fanout `article-delivered.exchange` | manual |
+| Infrastructure | Anggota 5 | – | RabbitMQ, Postgres, Redis, MinIO, Nginx | manual |
 
 ## Stemming (mixed ID/EN)
 
@@ -69,7 +69,7 @@ stateDiagram-v2
 
 - `tokenizeText(text)` — keeps punctuation, URLs, emails, code-like chunks.
 - `detectTokenLanguage(token)` — per-token score using ID/EN stopword lists, common-word sets, and affix patterns (`me-`, `ber-`, `ter-`, `pe-`, `-kan`, `-nya`, `-lah`, `-ing`, `-ed`, `-ly`, `-tion`, `-s`).
-- `stemToken(token, fallback)` — runs SastrawiJS for ID, natural Porter for EN, preserves technical terms (`kafka`, `redis`, `docker`, `postgres`, `scalable`, `storage`, `recycle`, …).
+- `stemToken(token, fallback)` — runs SastrawiJS for ID, natural Porter for EN, preserves technical terms (`rabbitmq`, `redis`, `docker`, `postgres`, `scalable`, `storage`, `recycle`, …).
 - `stemMixedLanguageText(text)` — tokenizes, detects majority language, stems per token.
 
 ```mermaid
@@ -111,15 +111,15 @@ flowchart LR
     Cache -->|miss| DB[(Postgres)]
     Cache -->|hit| Resp[Response]
     Express --> CB[Circuit Breaker]
-    CB -->|closed| KP[Kafka publisher]
+    CB -->|closed| RP[RabbitMQ publisher]
     CB -->|open| Fail[Reject early]
-    KP --> T0[(Kafka)]
+    RP --> T0[(RabbitMQ)]
 ```
 
 - **IP rate limit on `POST /api/articles`** via `express-rate-limit` (`RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`).
 - **`TRUST_PROXY`** opt-in for `X-Forwarded-For` behind Nginx.
 - **In-memory TTL cache** (LRU) for `GET /api/articles` and `GET /api/articles/:id`; POST invalidates only `list:*` keys.
-- **Circuit breaker** around `KafkaEventPublisher.publish` (cooldown + failure threshold) in `article-service`.
+- **Circuit breaker** around `RabbitMQEventPublisher.publish` (cooldown + failure threshold) in `article-service`.
 - **Parallel startup** — topic ensure + producer connect run via `Promise.all`; worker topic ensure pairs parallelized.
 - **Mixed-language stemming** preserves readability (URLs, emails, code, technical terms).
 
@@ -136,7 +136,7 @@ Access:
 | URL | What |
 |---|---|
 | http://localhost:8080 | Dashboard (load-balanced) |
-| http://localhost:8081 | Kafka UI |
+| http://localhost:15672 | RabbitMQ Management UI (`articleswap` / `articleswap`) |
 | http://localhost:9001 | MinIO console (`articleswap` / `articleswap123`) |
 | `localhost:5432` | Postgres |
 | `localhost:6379` | Redis |
@@ -145,7 +145,7 @@ Stop and clean:
 
 ```bash
 docker compose down        # stop containers
-docker compose down -v     # drop volumes (Kafka state, Postgres, MinIO)
+docker compose down -v     # drop volumes (RabbitMQ state, Postgres, MinIO)
 ```
 
 ### Native (no Docker)
@@ -274,4 +274,4 @@ Required secret: `GITHUB_TOKEN` (provided automatically). The workflow uses it t
 - **SvelteKit in container** runs Vite dev with bind-mounted source for HMR. For production, install `@sveltejs/adapter-node` and run `node build/index.js`.
 - **Mixed-language stemming** is heuristic; tokens with neither ID nor EN cues fall back to a majority-language pass (default `id`).
 - **Rate limit on POST** is per-IP. Set `TRUST_PROXY` to the number of trusted proxies (typically `1` behind Nginx).
-- **First publish** to a new Kafka topic can race; `KafkaTopicEnsurer.ensure()` runs at startup.
+- **First publish** to a new RabbitMQ queue can race; `RabbitMQQueueEnsurer.ensure()` runs at startup.

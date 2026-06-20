@@ -1,30 +1,19 @@
 services:
-  # Apache Kafka in KRaft mode
-  kafka:
-    image: apache/kafka:latest
-    container_name: articleswap-kafka
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: articleswap-rabbitmq
     environment:
-      - KAFKA_NODE_ID=0
-      - KAFKA_PROCESS_ROLES=controller,broker
-      - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
-      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
-      - CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
-      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
-      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
-      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
-      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
-      - KAFKA_MESSAGE_MAX_BYTES=10485760
-      - KAFKA_REPLICA_FETCH_MAX_BYTES=10485760
+      - RABBITMQ_DEFAULT_USER=articleswap
+      - RABBITMQ_DEFAULT_PASS=articleswap
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
-      timeout: 10s
+      timeout: 5s
       retries: 30
-      start_period: 15s
+      start_period: 10s
+    ports:
+      - "5672:5672"
+      - "15672:15672"
     networks:
       - articleswap-net
 
@@ -33,16 +22,16 @@ services:
       context: ./api-gateway
     container_name: articleswap-gateway1
     environment:
-      - KAFKA_BROKERS=kafka:9092
-      - KAFKA_TOPIC=article-delivered
-      - KAFKA_CLIENT_ID=articles-api-gateway
+      - RABBITMQ_URL=amqp://articleswap:articleswap@rabbitmq:5672
+      - RABBITMQ_DELIVERED_EXCHANGE=article-delivered.exchange
+      - RABBITMQ_CONSUMER_NAME=gateway1
       - CLUSTER_PEERS=gateway1:5173,gateway2:5173
       - HOSTNAME=gateway1
       - ARTICLE_SERVICE_URL=http://article-service:3000
     volumes:
       - ./api-gateway/src:/app/src:ro
     depends_on:
-      kafka:
+      rabbitmq:
         condition: service_healthy
     networks:
       - articleswap-net
@@ -52,34 +41,33 @@ services:
       context: ./api-gateway
     container_name: articleswap-gateway2
     environment:
-      - KAFKA_BROKERS=kafka:9092
-      - KAFKA_TOPIC=article-delivered
-      - KAFKA_CLIENT_ID=articles-api-gateway
+      - RABBITMQ_URL=amqp://articleswap:articleswap@rabbitmq:5672
+      - RABBITMQ_DELIVERED_EXCHANGE=article-delivered.exchange
+      - RABBITMQ_CONSUMER_NAME=gateway2
       - CLUSTER_PEERS=gateway1:5173,gateway2:5173
       - HOSTNAME=gateway2
       - ARTICLE_SERVICE_URL=http://article-service:3000
     volumes:
       - ./api-gateway/src:/app/src:ro
     depends_on:
-      kafka:
+      rabbitmq:
         condition: service_healthy
     networks:
       - articleswap-net
 
   # Article submission service (split from api-gateway).
-  # Owns the POST /api/articles endpoint and Kafka producer.
+  # Owns the POST /api/articles endpoint and RabbitMQ publisher.
   article-service:
     build:
       context: ./services/article-service
     container_name: articleswap-article-service
     environment:
-      - KAFKA_BROKERS=kafka:9092
-      - KAFKA_TOPIC=article-submissions
-      - KAFKA_CLIENT_ID=article-service
+      - RABBITMQ_URL=amqp://articleswap:articleswap@rabbitmq:5672
+      - RABBITMQ_QUEUE=article-submissions
       - PORT=3000
       - DATABASE_URL=postgresql://articleswap:articleswap@postgres:5432/articleswap
     depends_on:
-      kafka:
+      rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_started
@@ -164,14 +152,22 @@ services:
     build:
       context: ./services/stemming-service
     container_name: articleswap-stemming-service
+    restart: unless-stopped
     environment:
-      - KAFKA_BROKERS=kafka:9092
+      - RABBITMQ_URL=amqp://articleswap:articleswap@rabbitmq:5672
       - DATABASE_URL=postgresql://articleswap:articleswap@postgres:5432/articleswap
       - REDIS_URL=redis://redis:6379
       - CONSUME_TOPIC=article-submissions
       - PRODUCE_TOPIC=article-stemmed
+      - DLQ_TOPIC=article-submissions-dlq
+      - PENDING_REQUEUE_THRESHOLD_MINUTES=30
+      - RABBITMQ_CONSUMER_NAME=stemming-service
+      - RABBITMQ_PREFETCH=1
+      - HEALTH_PORT=3001
+    ports:
+      - "3001:3001"
     depends_on:
-      kafka:
+      rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_started
@@ -185,11 +181,13 @@ services:
       context: ./services/wordcloud-service
     container_name: articleswap-wordcloud-service
     environment:
-      - KAFKA_BROKERS=kafka:9092
+      - RABBITMQ_URL=amqp://articleswap:articleswap@rabbitmq:5672
       - DATABASE_URL=postgresql://articleswap:articleswap@postgres:5432/articleswap
       - REDIS_URL=redis://redis:6379
       - CONSUME_TOPIC=article-stemmed
       - PRODUCE_TOPIC=article-wordcloud-generated
+      - RABBITMQ_CONSUMER_NAME=wordcloud-service
+      - RABBITMQ_PREFETCH=1
 
       # MinIO config
       - MINIO_ENDPOINT=minio
@@ -200,7 +198,7 @@ services:
       - MINIO_USE_SSL=false
       - PUBLIC_MINIO_URL=http://localhost:9000
     depends_on:
-      kafka:
+      rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_started
@@ -218,29 +216,17 @@ services:
       context: ./services/forwarding-inbox-service
     container_name: articleswap-forwarding-inbox-service
     environment:
-      - KAFKA_BROKERS=kafka:9092
+      - RABBITMQ_URL=amqp://articleswap:articleswap@rabbitmq:5672
       - DATABASE_URL=postgresql://articleswap:articleswap@postgres:5432/articleswap
       - CONSUME_TOPIC=article-wordcloud-generated
       - PRODUCE_TOPIC=article-delivered
+      - RABBITMQ_CONSUMER_NAME=forwarding-inbox-service
+      - RABBITMQ_PREFETCH=1
     depends_on:
-      kafka:
+      rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_started
-    networks:
-      - articleswap-net
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: articleswap-kafka-ui
-    ports:
-      - "8081:8080"
-    environment:
-      - KAFKA_CLUSTERS_0_NAME=articleswap
-      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
-    depends_on:
-      kafka:
-        condition: service_healthy
     networks:
       - articleswap-net
 

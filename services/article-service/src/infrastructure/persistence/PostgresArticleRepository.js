@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { sanitizePostgresText } from '../../domain/sanitizeText.js';
 
 /**
  * Postgres-backed article repository. Concrete implementation of the
@@ -19,8 +20,8 @@ export class PostgresArticleRepository {
    * @returns {Promise<object>} Persisted row from DB.
    */
   async create(article) {
-    const fileData = article.file?.data ?? null;
-    const fileName = article.file?.name ?? null;
+    const fileData = sanitizePostgresText(article.file?.data) ?? null;
+    const fileName = sanitizePostgresText(article.file?.name) ?? null;
     const fileSize = fileData ? Math.floor((fileData.length * 3) / 4) : null; // base64 → bytes approx
 
     const sql = `
@@ -31,13 +32,13 @@ export class PostgresArticleRepository {
     `;
     const values = [
       article.id,
-      article.title,
-      article.content || null,
+      sanitizePostgresText(article.title),
+      sanitizePostgresText(article.content) || null,
       fileName,
       fileData,
       fileSize,
-      article.sender,
-      article.receiver,
+      sanitizePostgresText(article.sender),
+      sanitizePostgresText(article.receiver),
       'PENDING'
     ];
     const result = await this.pool.query(sql, values);

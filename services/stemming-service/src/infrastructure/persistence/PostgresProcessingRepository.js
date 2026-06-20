@@ -24,4 +24,17 @@ export class PostgresProcessingRepository {
       throw error;
     }
   }
+
+  async findStalePendingArticles({ thresholdMinutes, limit = 500 }) {
+    const result = await this.pool.query(
+      `SELECT id, title, content, file_name AS "fileName", file_data AS "fileData", file_size AS "fileSize", sender, receiver, created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM articles
+       WHERE status = 'PENDING'
+         AND updated_at < NOW() - ($1::int * INTERVAL '1 minute')
+       ORDER BY updated_at ASC
+       LIMIT $2`,
+      [thresholdMinutes, limit]
+    );
+    return result.rows;
+  }
 }

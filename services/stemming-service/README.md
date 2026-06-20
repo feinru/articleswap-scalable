@@ -1,6 +1,6 @@
 # Stemming Service
 
-Kafka consumer/producer dalam pipeline ArticleSwap.
+RabbitMQ consumer/producer dalam pipeline ArticleSwap.
 
 **Pipeline position**: consume `article-submissions` → produce `article-stemmed`
 
@@ -13,7 +13,9 @@ npm run dev
 ```
 
 ## Env (di-set di docker-compose.yml, contoh)
-- `KAFKA_BROKERS` — broker addresses, comma-separated
+- `RABBITMQ_URL` — AMQP connection URL
+- `RABBITMQ_CONSUMER_NAME` — consumer instance name
+- `RABBITMQ_PREFETCH` — unacked message limit
 - `DATABASE_URL` — Postgres connection string
 - `REDIS_URL` — Redis (kalau pakai untuk cache/dedup)
 - `CONSUME_TOPIC` — default: `article-submissions`
