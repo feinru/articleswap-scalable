@@ -5,9 +5,10 @@ export class KafkaEventConsumer {
     brokers,
     clientId,
     groupId,
-    sessionTimeout = 60000,
-    heartbeatInterval = 5000,
-    rebalanceTimeout = 90000,
+    sessionTimeout = 120000,
+    heartbeatInterval = 3000,
+    rebalanceTimeout = 120000,
+    maxWaitTimeInMs = 5000,
     maxBytesPerPartition = 1048576,
     maxInFlightRequests = 1,
     retry = { retries: 8, initialRetryTime: 300, multiplier: 2 },
@@ -20,6 +21,7 @@ export class KafkaEventConsumer {
     this.sessionTimeout = sessionTimeout;
     this.heartbeatInterval = heartbeatInterval;
     this.rebalanceTimeout = rebalanceTimeout;
+    this.maxWaitTimeInMs = maxWaitTimeInMs;
     this.maxBytesPerPartition = maxBytesPerPartition;
     this.maxInFlightRequests = maxInFlightRequests;
     this.kafka = new Kafka({
@@ -54,6 +56,7 @@ export class KafkaEventConsumer {
         sessionTimeout: this.sessionTimeout,
         heartbeatInterval: this.heartbeatInterval,
         rebalanceTimeout: this.rebalanceTimeout,
+        maxWaitTimeInMs: this.maxWaitTimeInMs,
         maxBytesPerPartition: this.maxBytesPerPartition,
         maxInFlightRequests: this.maxInFlightRequests,
         retry: { retries: 8 }
@@ -150,7 +153,9 @@ export class KafkaEventConsumer {
     });
     this.consumer.on(events.DISCONNECT, () => {
       this.metrics.connected = false;
-      this.logger.warn(`[${this.groupId}] consumer disconnected`);
+      this.metrics.running = false;
+      this.logger.error(`[${this.groupId}] consumer disconnected`);
+      process.exit(1);
     });
     this.consumer.on(events.GROUP_JOIN, ({ payload }) => {
       this.logger.log(`[${this.groupId}] joined group as ${payload.memberId}`);
@@ -161,12 +166,9 @@ export class KafkaEventConsumer {
     this.consumer.on(events.CRASH, ({ payload }) => {
       this.metrics.lastCrashAt = new Date().toISOString();
       this.metrics.lastError = payload.error.message;
-      this.logger.error(`[${this.groupId}] consumer crash restart=${payload.restart}:`, payload.error.message);
-      if (!payload.restart && this.running) {
-        this.restartTimer = setTimeout(() => {
-          process.exit(1);
-        }, 1000);
-      }
+      this.metrics.running = false;
+      this.logger.error(`[stemming-service] consumer crashed`, payload);
+      process.exit(1);
     });
   }
 

@@ -6,6 +6,7 @@ import {
   detectTokenLanguage,
   StemArticle,
   stemMixedLanguageText,
+  stemMixedLanguageTextAsync,
   stemToken,
   tokenizeText
 } from '../src/usecases/StemArticle.js';
@@ -59,6 +60,38 @@ test('StemArticle usecase writes mixed-language stemmedContent', async () => {
 
   assert.equal(result.stemmedContent, 'kembang aplikasi scalable sangat senang karena user can share article quick.');
   assert.equal(typeof result.stemmedAt, 'string');
+});
+
+test('async stemmer yields and heartbeats during long content processing', async () => {
+  let heartbeats = 0;
+  const input = Array.from({ length: 250 }, () => 'Pengembangan').join(' ');
+
+  const result = await stemMixedLanguageTextAsync(input, {
+    yieldEveryTokens: 50,
+    heartbeat: async () => {
+      heartbeats += 1;
+    }
+  });
+
+  assert.equal(result.split(' ')[0], 'kembang');
+  assert.ok(heartbeats >= 4);
+});
+
+test('StemArticle passes heartbeat through non-blocking async stemmer', async () => {
+  let heartbeats = 0;
+  const article = {
+    id: 'article-long',
+    content: Array.from({ length: 220 }, () => 'Pengembangan').join(' ')
+  };
+
+  await new StemArticle().execute(article, {
+    yieldEveryTokens: 50,
+    heartbeat: async () => {
+      heartbeats += 1;
+    }
+  });
+
+  assert.ok(heartbeats >= 4);
 });
 
 test('Kafka handler preserves existing topics, stores stemmed content, and publishes article-stemmed event', async () => {

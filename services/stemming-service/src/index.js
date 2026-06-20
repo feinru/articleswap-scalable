@@ -25,9 +25,10 @@ async function main() {
     brokers,
     clientId: `${SERVICE}-consumer`,
     groupId: process.env.KAFKA_CONSUMER_GROUP || SERVICE,
-    sessionTimeout: Number(process.env.KAFKA_SESSION_TIMEOUT_MS || 60000),
-    heartbeatInterval: Number(process.env.KAFKA_HEARTBEAT_INTERVAL_MS || 5000),
-    rebalanceTimeout: Number(process.env.KAFKA_REBALANCE_TIMEOUT_MS || 90000),
+    sessionTimeout: Number(process.env.KAFKA_SESSION_TIMEOUT_MS || 120000),
+    heartbeatInterval: Number(process.env.KAFKA_HEARTBEAT_INTERVAL_MS || 3000),
+    rebalanceTimeout: Number(process.env.KAFKA_REBALANCE_TIMEOUT_MS || 120000),
+    maxWaitTimeInMs: Number(process.env.KAFKA_MAX_WAIT_TIME_MS || 5000),
     maxBytesPerPartition: Number(process.env.KAFKA_MAX_BYTES_PER_PARTITION || 1048576),
     maxInFlightRequests: Number(process.env.KAFKA_MAX_IN_FLIGHT_REQUESTS || 1)
   });

@@ -16,7 +16,7 @@ export function createArticleHandler({ eventPublisher, kafkaConsumer, topicEnsur
         topic: consumeTopic,
         handler: async (article, message, { heartbeat } = {}) => {
           const result = await withRetry(
-            () => useCase.execute(article),
+            () => useCase.execute(article, { heartbeat }),
             { attempts: maxAttempts, heartbeat, label: `stem ${article.id}`, logger }
           );
           if (processingRepository) {
